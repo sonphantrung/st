@@ -1,2 +1,2 @@
-#ST
+# Suckless Terminal
 My St config
