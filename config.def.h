@@ -9,6 +9,8 @@ static char *font = "Mononoki Nerd Font:pixelsize=15:antialias=true:autohint=tru
 static char *font2[] = {
 	"Hack:pixelsize=15:antialias=true:autohint=true",
 	"JoyPixels:pixelsize=15:antialias=true:autohint=true",
+        "Symbola:pixelsize=15:antialias=true:autohint=true",
+        "IPAGothic:pixelsize=15:antialias=true:autohint=true",
 };
 static int borderpx = 2;
 
@@ -125,9 +127,10 @@ static const char *colorname[] = {
 	[255] = 0,
 
 	/* more colors can be added after 255 to use with DefaultXX */
-	"#2e3440", /* background */
-	"#d8dee9", /* foreground */
-	"#2e3440",
+	"#add8e6", /* background */
+	"#555555", /* foreground */
+	"#2E3440",
+	"#d8dee9",
 };
 
 
@@ -135,7 +138,7 @@ static const char *colorname[] = {
  * Default colors (colorname index)
  * foreground, background, cursor, reverse cursor
  */
-unsigned int defaultfg = 7;
+unsigned int defaultfg = 259;
 unsigned int defaultbg = 258;
 static unsigned int defaultcs = 256;
 static unsigned int defaultrcs = 257;
