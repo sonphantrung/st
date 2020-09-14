@@ -5,9 +5,12 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "Mononoki Nerd Font:pixelsize=15:antialias=true:autohint=true";
+static char *font = "Fira Code:pixelsize=15:antialias=true:autohint=true";
 static char *font2[] = {
-	"Hack:pixelsize=15:antialias=true:autohint=true",
+	"Hack Nerd Font:pixelsize=15:antialias=true:autohint=true",
+	"Font Awesome 5 Free Solid:pixelsize=15:antialias=true:autohint=true",
+	"Font Awesome 5 Free Regular:pixelsize=15:antialias=true:autohint=true",
+	"Font Awesome 5 Brands Regular:pixelsize=15:antialias=true:autohint=true",
 	"JoyPixels:pixelsize=15:antialias=true:autohint=true",
         "Symbola:pixelsize=15:antialias=true:autohint=true",
         "IPAGothic:pixelsize=15:antialias=true:autohint=true",
@@ -100,7 +103,7 @@ char *termname = "st-256color";
 unsigned int tabspaces = 8;
 
 /* bg opacity */
-float alpha = 0.7;
+float alpha = 1;
 
 /* Terminal colors (16 first used in escape sequence) */
 static const char *colorname[] = {
