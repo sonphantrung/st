@@ -5,12 +5,8 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "Victor Mono:pixelsize=15:antialias=true:autohint=true";
+static char *font = "Iosevka Nerd Font:pixelsize=15:antialias=true:autohint=true";
 static char *font2[] = {
-	"Hack Nerd Font:pixelsize=15:antialias=true:autohint=true",
-	"Font Awesome 5 Free Solid:pixelsize=15:antialias=true:autohint=true",
-	"Font Awesome 5 Free Regular:pixelsize=15:antialias=true:autohint=true",
-	"Font Awesome 5 Brands Regular:pixelsize=15:antialias=true:autohint=true",
 	"JoyPixels:pixelsize=15:antialias=true:autohint=true",
         "Symbola:pixelsize=15:antialias=true:autohint=true",
         "IPAGothic:pixelsize=15:antialias=true:autohint=true",
