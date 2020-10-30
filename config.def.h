@@ -5,7 +5,7 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "JetBrainsMono Nerd Font:pixelsize=15:antialias=true:autohint=true";
+static char *font = "monospace:pixelsize=15:antialias=true:autohint=true";
 static char *font2[] = {
 	"JoyPixels:pixelsize=15:antialias=true:autohint=true",
         "Symbola:pixelsize=15:antialias=true:autohint=true",
