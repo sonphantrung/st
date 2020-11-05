@@ -7,6 +7,7 @@
  */
 static char *font = "monospace:pixelsize=15:antialias=true:autohint=true";
 static char *font2[] = {
+	"Hack Nerd Font:pixelsize=15:antialias=true:autohint=true",
 	"JoyPixels:pixelsize=15:antialias=true:autohint=true",
         "Symbola:pixelsize=15:antialias=true:autohint=true",
         "IPAGothic:pixelsize=15:antialias=true:autohint=true",
