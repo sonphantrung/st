@@ -8,9 +8,8 @@
 static char *font = "monospace:pixelsize=14:antialias=true:autohint=true";
 static char *font2[] = {
 	"Hack Nerd Font:pixelsize=14:antialias=true:autohint=true",
-	"JoyPixels:pixelsize=14:antialias=true:autohint=true",
-        "Symbola:pixelsize=14:antialias=true:autohint=true",
-        "IPAGothic:pixelsize=14:antialias=true:autohint=true",
+	"Noto Color Emoji:pixelsize=10:antialias=true:autohint=true",
+        "Noto Sans:pixelsize=14:antialias=true:autohint=true",
 };
 static int borderpx = 2;
 
