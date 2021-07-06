@@ -117,7 +117,7 @@ float alpha = 0.8;
 static const char *colorname[] = {
 
   /* 8 normal colors */
-  "#282a2e", /* black   */
+  "#24282d", /* black   */
   "#822a2a", /* red     */
   "#646a2f", /* green   */
   "#c97941", /* yellow  */
@@ -127,7 +127,7 @@ static const char *colorname[] = {
   "#5d636a", /* white   */
 
   /* 8 bright colors */
-   "#24282d", /* black   */
+   "#282a2e", /* black   */
    "#ac7070", /* red     */
    "#7a813a", /* green   */
    "#e8c581", /* yellow  */
