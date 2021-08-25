@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <wchar.h>
 
+#include "sixel.h"
 #include "st.h"
 #include "win.h"
 
@@ -56,6 +57,7 @@ enum term_mode {
 	MODE_ECHO        = 1 << 4,
 	MODE_PRINT       = 1 << 5,
 	MODE_UTF8        = 1 << 6,
+	MODE_SIXEL       = 1 << 7,
 };
 
 enum cursor_movement {
@@ -87,6 +89,7 @@ enum escape_state {
 	ESC_STR_END    = 16, /* a final string was encountered */
 	ESC_TEST       = 32, /* Enter in test mode */
 	ESC_UTF8       = 64,
+	ESC_DCS        = 128,
 };
 
 typedef struct {
@@ -137,6 +140,7 @@ typedef struct {
 	int icharset; /* selected charset for sequence */
 	int *tabs;
 	Rune lastc;   /* last printed char outside of sequence, 0 if control */
+	SixelContext sixel;
 } Term;
 
 /* CSI Escape sequence structs */
@@ -167,6 +171,7 @@ static void sigchld(int);
 static void ttywriteraw(const char *, size_t);
 
 static void csidump(void);
+static void dcshandle(void);
 static void csihandle(void);
 static void csiparse(void);
 static void csireset(void);
@@ -239,6 +244,33 @@ static const uchar utfbyte[UTF_SIZ + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
 static const uchar utfmask[UTF_SIZ + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 static const Rune utfmin[UTF_SIZ + 1] = {       0,    0,  0x80,  0x800,  0x10000};
 static const Rune utfmax[UTF_SIZ + 1] = {0x10FFFF, 0x7F, 0x7FF, 0xFFFF, 0x10FFFF};
+
+#include <time.h>
+static int su = 0;
+struct timespec sutv;
+
+static void
+tsync_begin()
+{
+	clock_gettime(CLOCK_MONOTONIC, &sutv);
+	su = 1;
+}
+
+static void
+tsync_end()
+{
+	su = 0;
+}
+
+int
+tinsync(uint timeout)
+{
+	struct timespec now;
+	if (su && !clock_gettime(CLOCK_MONOTONIC, &now)
+	       && TIMEDIFF(now, sutv) >= timeout)
+		su = 0;
+	return su;
+}
 
 ssize_t
 xwrite(int fd, const char *s, size_t len)
@@ -849,6 +881,9 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 	return cmdfd;
 }
 
+static int twrite_aborted = 0;
+int ttyread_pending() { return twrite_aborted; }
+
 size_t
 ttyread(void)
 {
@@ -857,7 +892,7 @@ ttyread(void)
 	int ret, written;
 
 	/* append read bytes to unprocessed bytes */
-	ret = read(cmdfd, buf+buflen, LEN(buf)-buflen);
+	ret = twrite_aborted ? 1 : read(cmdfd, buf+buflen, LEN(buf)-buflen);
 
 	switch (ret) {
 	case 0:
@@ -865,7 +900,7 @@ ttyread(void)
 	case -1:
 		die("couldn't read from shell: %s\n", strerror(errno));
 	default:
-		buflen += ret;
+    	buflen += twrite_aborted ? 0 : ret;
 		written = twrite(buf, buflen, 0);
 		buflen -= written;
 		/* keep any incomplete UTF-8 byte sequence for the next call */
@@ -1028,6 +1063,7 @@ tsetdirtattr(int attr)
 void
 tfulldirt(void)
 {
+	tsync_end();
 	tsetdirt(0, term.row-1);
 }
 
@@ -1049,6 +1085,7 @@ void
 treset(void)
 {
 	uint i;
+	ImageList *im;
 
 	term.c = (TCursor){{
 		.mode = ATTR_NULL,
@@ -1071,6 +1108,9 @@ treset(void)
 		tclearregion(0, 0, term.col-1, term.row-1);
 		tswapscreen();
 	}
+
+	for (im = term.sixel.images; im; im = im->next)
+		im->should_delete = 1;
 }
 
 void
@@ -1081,13 +1121,21 @@ tnew(int col, int row)
 	treset();
 }
 
+int tisaltscr(void)
+{
+	return IS_SET(MODE_ALTSCREEN);
+}
+
 void
 tswapscreen(void)
 {
 	Line *tmp = term.line;
+	ImageList *im = term.sixel.images;
 
 	term.line = term.alt;
 	term.alt = tmp;
+	term.sixel.images = term.sixel.images_alt;
+	term.sixel.images_alt = im;
 	term.mode ^= MODE_ALTSCREEN;
 	tfulldirt();
 }
@@ -1139,6 +1187,8 @@ tscrolldown(int orig, int n, int copyhist)
 		term.hist[term.histi] = term.line[term.bot];
 		term.line[term.bot] = temp;
 	}
+	/* process scrolldown */
+	xsixelscrolldown(&term.sixel, n, term.bot);
 
 	tsetdirt(orig, term.bot-n);
 	tclearregion(0, term.bot-n+1, term.col-1, term.bot);
@@ -1158,6 +1208,7 @@ tscrollup(int orig, int n, int copyhist)
 {
 	int i;
 	Line temp;
+	ImageList *im;
 
 	LIMIT(n, 0, term.bot-orig+1);
 
@@ -1179,6 +1230,10 @@ tscrollup(int orig, int n, int copyhist)
 		term.line[i] = term.line[i+n];
 		term.line[i+n] = temp;
 	}
+
+	/* process scrollup */
+	xsixelscrollup(&term.sixel, n, term.top);
+
 
 	if (term.scr == 0)
 		selscroll(orig, -n);
@@ -1687,6 +1742,23 @@ tsetmode(int priv, int set, const int *args, int narg)
 }
 
 void
+dcshandle(void)
+{
+	switch (csiescseq.mode[0]) {
+	default:
+		fprintf(stderr, "erresc: unknown csi ");
+		csidump();
+		/* die(""); */
+		break;
+	case 'q': /* DECSIXEL */
+		if (xsixelinit(&term.sixel) != 0)
+			perror("sixel_parser_init() failed");
+		term.mode |= MODE_SIXEL;
+		break;
+	}
+}
+
+void
 csihandle(void)
 {
 	char buf[40];
@@ -1931,8 +2003,10 @@ csireset(void)
 void
 strhandle(void)
 {
+	TermWindow win;
 	char *p = NULL, *dec;
 	int j, narg, par;
+	int i;
 
 	term.esc &= ~(ESC_STR_END|ESC_STR);
 	strparse();
@@ -1992,6 +2066,13 @@ strhandle(void)
 		xsettitle(strescseq.args[0]);
 		return;
 	case 'P': /* DCS -- Device Control String */
+ 		term.mode |= ESC_DCS;
+		/* https://gitlab.com/gnachman/iterm2/-/wikis/synchronized-updates-spec */
+		if (strstr(strescseq.buf, "=1s") == strescseq.buf)
+			tsync_begin(), term.mode &= ~ESC_DCS;  /* BSU */
+		else if (strstr(strescseq.buf, "=2s") == strescseq.buf)
+			tsync_end(), term.mode &= ~ESC_DCS;  /* ESU */
+		return;
 	case '_': /* APC -- Application Program Command */
 	case '^': /* PM -- Privacy Message */
 		return;
@@ -2243,6 +2324,7 @@ tstrsequence(uchar c)
 	switch (c) {
 	case 0x90:   /* DCS -- Device Control String */
 		c = 'P';
+		term.esc |= ESC_DCS;
 		break;
 	case 0x9f:   /* APC -- Application Program Command */
 		c = '_';
@@ -2374,6 +2456,7 @@ eschandle(uchar ascii)
 		term.esc |= ESC_UTF8;
 		return 0;
 	case 'P': /* DCS -- Device Control String */
+		term.esc |= ESC_DCS;
 	case '_': /* APC -- Application Program Command */
 	case '^': /* PM -- Privacy Message */
 	case ']': /* OSC -- Operating System Command */
@@ -2471,12 +2554,19 @@ tputc(Rune u)
 	 * character.
 	 */
 	if (term.esc & ESC_STR) {
-		if (u == '\a' || u == 030 || u == 032 || u == 033 ||
-		   ISCONTROLC1(u)) {
-			term.esc &= ~(ESC_START|ESC_STR);
+		if (u == '\a' || u == 030 || u == 032 || u == 033 || ISCONTROLC1(u)) {
+			term.esc &= ~(ESC_START|ESC_STR|ESC_DCS);
 			term.esc |= ESC_STR_END;
 			goto check_control_code;
 		}
+
+		if (IS_SET(MODE_SIXEL)) {
+			if (xsixelparse(&term.sixel, (unsigned char *)&u, 1) != 0)
+				perror("sixel_parser_parse() failed");
+			return;
+		}
+		if (term.esc&ESC_DCS && strescseq.len == 0 && u == 'q')
+			term.mode |= MODE_SIXEL;
 
 		if (strescseq.len+len >= strescseq.siz) {
 			/*
@@ -2526,6 +2616,15 @@ check_control_code:
 				term.esc = 0;
 				csiparse();
 				csihandle();
+			}
+			return;
+		} else if (term.esc & ESC_DCS) {
+			csiescseq.buf[csiescseq.len++] = u;
+			if (BETWEEN(u, 0x40, 0x7E)
+					|| csiescseq.len >= \
+					sizeof(csiescseq.buf)-1) {
+				csiparse();
+				dcshandle();
 			}
 			return;
 		} else if (term.esc & ESC_UTF8) {
@@ -2588,6 +2687,9 @@ twrite(const char *buf, int buflen, int show_ctrl)
 	Rune u;
 	int n;
 
+	int su0 = su;
+	twrite_aborted = 0;
+
 	for (n = 0; n < buflen; n += charsize) {
 		if (IS_SET(MODE_UTF8)) {
 			/* process a complete utf8 char */
@@ -2597,6 +2699,10 @@ twrite(const char *buf, int buflen, int show_ctrl)
 		} else {
 			u = buf[n] & 0xFF;
 			charsize = 1;
+		}
+		if (su0 && !su) {
+			twrite_aborted = 1;
+			break;  // ESU - allow rendering before a new BSU
 		}
 		if (show_ctrl && ISCONTROL(u)) {
 			if (u & 0x80) {
@@ -2748,6 +2854,7 @@ draw(void)
 		cx--;
 
 	drawregion(0, 0, term.col, term.row);
+    xdrawsixel(&term.sixel, term.line, term.row, term.col);
 	if (term.scr == 0)
 		xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
 				term.ocx, term.ocy, term.line[term.ocy][term.ocx],

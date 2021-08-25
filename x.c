@@ -18,6 +18,7 @@
 
 char *argv0;
 #include "arg.h"
+#include "sixel.h"
 #include "st.h"
 #include "win.h"
 #include "hb.h"
@@ -36,6 +37,7 @@ typedef struct {
 	void (*func)(const Arg *);
 	const Arg arg;
 	uint  release;
+	int  altscrn;  /* 0: don't care, -1: not alt screen, 1: alt screen */
 } MouseShortcut;
 
 typedef struct {
@@ -91,18 +93,6 @@ static void ttysend(const Arg *);
 typedef XftDraw *Draw;
 typedef XftColor Color;
 typedef XftGlyphFontSpec GlyphFontSpec;
-
-/* Purely graphic info */
-typedef struct {
-	int tw, th; /* tty width and height */
-	int w, h; /* window width and height */
-	int hborderpx, vborderpx;
-	int ch; /* char height */
-	int cw; /* char width  */
-	int cyo; /* char y offset */
-	int mode; /* window state/mode flags */
-	int cursor; /* cursor style */
-} TermWindow;
 
 typedef struct {
 	Display *dpy;
@@ -274,6 +264,12 @@ static char *opt_name  = NULL;
 static char *opt_title = NULL;
 
 static int oldbutton = 3; /* button event on startup: 3 = release */
+
+TermWindow
+gettermwindow()
+{
+	return win;
+}
 
 void
 clipcopy(const Arg *dummy)
@@ -470,6 +466,7 @@ mouseaction(XEvent *e, uint release)
 	for (ms = mshortcuts; ms < mshortcuts + LEN(mshortcuts); ms++) {
 		if (ms->release == release &&
 		    ms->button == e->xbutton.button &&
+		    (!ms->altscrn || (ms->altscrn == (tisaltscr() ? 1 : -1))) &&
 		    (match(ms->mod, state) ||  /* exact or forced */
 		     match(ms->mod, state & ~forcemousemod))) {
 			ms->func(&(ms->arg));
@@ -1582,36 +1579,22 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 	if (dmode & DRAW_BG) {
 		/* Intelligent cleaning up of the borders. */
 		if (x == 0) {
-			xclear(0, (y == 0)? 0 : winy, win.vborderpx,
+			xclear(0, (y == 0)? 0 : winy, borderpx,
 					winy + win.ch +
-					((winy + win.ch >= win.vborderpx + win.th)? win.h : 0));
+					((winy + win.ch >= borderpx + win.th)? win.h : 0));
 		}
-		if (winx + width >= win.hborderpx + win.tw) {
+		if (winx + width >= borderpx + win.tw) {
 			xclear(winx + width, (y == 0)? 0 : winy, win.w,
-					((winy + win.ch >= win.vborderpx + win.th)? win.h : (winy + win.ch)));
+					((winy + win.ch >= borderpx + win.th)? win.h : (winy + win.ch)));
 		}
 		if (y == 0)
-			xclear(winx, 0, winx + width, win.hborderpx);
-		if (winy + win.ch >= win.vborderpx + win.th)
+			xclear(winx, 0, winx + width, borderpx);
+		if (winy + win.ch >= borderpx + win.th)
 			xclear(winx, winy + win.ch, winx + width, win.h);
 
 		/* Fill the background */
 		XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
 	}
- 
-
-	/* Clean up the region we want to draw to. */
-	XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
-
-	/* Set the clip region because Xft is sometimes dirty. */
-	r.x = 0;
-	r.y = 0;
-	r.height = win.ch;
-	r.width = width;
-	XftDrawSetClipRectangles(xw.draw, winx, winy, &r, 1);
-
-	/* Reset clip to none. */
-	XftDrawSetClip(xw.draw, 0);
 
 	if (dmode & DRAW_FG) {
 		if (base.mode & ATTR_BOXDRAW) {
@@ -1769,6 +1752,87 @@ xsettitle(char *p)
 }
 
 int
+xsixelinit(SixelContext *ctx)
+{
+	return sixel_parser_init(&ctx->state, 0, dc.col[defaultbg].pixel, 1, win.cw, win.ch);
+}
+
+int
+xsixelparse(SixelContext *ctx, unsigned char *u, int len)
+{
+	return sixel_parser_parse(&ctx->state, u, len);
+}
+
+void
+xsixelnewimage(SixelContext *ctx, int tx, int ty)
+{
+	ImageList *new_image;
+	int i;
+
+	new_image = malloc(sizeof(ImageList));
+	memset(new_image, 0, sizeof(ImageList));
+	new_image->x = tx;
+	new_image->y = ty;
+	new_image->width = ctx->state.image.width;
+	new_image->height = ctx->state.image.height;
+	new_image->pixels = malloc(new_image->width * new_image->height * 4);
+	if (sixel_parser_finalize(&ctx->state, new_image->pixels) != 0) {
+		perror("sixel_parser_finalize() failed");
+		sixel_parser_deinit(&ctx->state);
+		return;
+	}
+	sixel_parser_deinit(&ctx->state);
+	if (ctx->images) {
+		ImageList *im;
+		for (im = ctx->images; im->next;)
+			im = im->next;
+		im->next = new_image;
+		new_image->prev = im;
+	} else {
+		ctx->images = new_image;
+	}
+}
+
+void
+xsixeldeleteimage(SixelContext *ctx, ImageList *im)
+{
+	if (im->prev)
+		im->prev->next = im->next;
+	else
+		ctx->images = im->next;
+	if (im->next)
+		im->next->prev = im->prev;
+	if (im->pixmap)
+		XFreePixmap(xw.dpy, (Drawable)im->pixmap);
+	free(im->pixels);
+	free(im);
+}
+
+void
+xsixelscrolldown(SixelContext *ctx, int n, int bottom)
+{
+	ImageList *im;
+	for (im = ctx->images; im; im = im->next) {
+		if (im->y < bottom)
+			im->y += n;
+		if (im->y > bottom)
+			im->should_delete = 1;
+	}
+}
+
+void
+xsixelscrollup(SixelContext *ctx, int n, int top)
+{
+	ImageList *im;
+	for (im = ctx->images; im; im = im->next) {
+		if (im->y+im->height/win.ch > top)
+			im->y -= n;
+		if (im->y+im->height/win.ch < top)
+			im->should_delete = 1;
+	}
+}
+
+int
 xstartdraw(void)
 {
 	if (IS_SET(MODE_VISIBLE))
@@ -1812,6 +1876,88 @@ xdrawline(Line line, int x1, int y1, int x2)
 		if (i > 0)
 			xdrawglyphfontspecs(specs, base, i, ox, y1, dmode);
 	}
+}
+
+void
+xdrawsixel(SixelContext *ctx, Line *line, int row, int col)
+{
+	ImageList *im, *tmp;
+	int x, y;
+	int n = 0;
+	int nlimit = 256;
+	XRectangle *rects = NULL;
+	XGCValues gcvalues = { 0 };
+	GC gc;
+
+	for (im = ctx->images; im;) {
+		if (im->should_delete) {
+			tmp = im;
+			im = im->next;
+			xsixeldeleteimage(ctx, tmp);
+			continue;
+		}
+
+		if (!im->pixmap) {
+			im->pixmap = (void *)XCreatePixmap(xw.dpy, xw.win, im->width, im->height, DefaultDepth(xw.dpy, xw.scr));
+			XImage ximage = {
+				.format = ZPixmap,
+				.data = (char *)im->pixels,
+				.width = im->width,
+				.height = im->height,
+				.xoffset = 0,
+				.byte_order = LSBFirst,
+				.bitmap_bit_order = MSBFirst,
+				.bits_per_pixel = 32,
+				.bytes_per_line = im->width * 4,
+				.bitmap_unit = 32,
+				.bitmap_pad = 32,
+				.depth = 24
+			};
+			XPutImage(xw.dpy, (Drawable)im->pixmap, dc.gc, &ximage, 0, 0, 0, 0, im->width, im->height);
+			free(im->pixels);
+			im->pixels = NULL;
+		}
+		n = 0;
+		for (y = im->y; y < (im->y + (im->height + win.ch - 1) / win.ch) && y < row; y++) {
+			if (y >= 0) {
+				for (x = im->x; x < (im->x + (im->width + win.cw - 1) / win.cw) && x < col; x++) {
+					if (!rects)
+						rects = xmalloc(sizeof(XRectangle) * nlimit);
+					if (line[y][x].mode & ATTR_SIXEL) {
+						if (n > 0 && rects[n-1].x+rects[n-1].width == borderpx+x*win.cw && rects[n-1].y == borderpx+y*win.ch) {
+							rects[n-1].width += win.cw;
+						} else {
+							rects[n].x = borderpx+x*win.cw;
+							rects[n].y = borderpx+y*win.ch;
+							rects[n].width = win.cw;
+							rects[n].height = win.ch;
+							if (++n == nlimit && (rects = realloc(rects, sizeof(XRectangle) * (nlimit *= 2))) == NULL)
+								die("Out of memory\n");
+						}
+					}
+				}
+			}
+			if (n > 1 && rects[n-2].x == rects[n-1].x && rects[n-2].width == rects[n-1].width) {
+				if (rects[n-2].y+rects[n-2].height == rects[n-1].y) {
+					rects[n-2].height += win.ch;
+					n--;
+				}
+			}
+		}
+		if (n == 0) {
+			tmp = im;
+			im = im->next;
+			xsixeldeleteimage(ctx, tmp);
+			continue;
+		}
+		gc = XCreateGC(xw.dpy, xw.win, 0, &gcvalues);
+		if (n > 1)
+			XSetClipRectangles(xw.dpy, gc, 0, 0, rects, n, YXSorted);
+		XCopyArea(xw.dpy, (Drawable)im->pixmap, xw.buf, gc, 0, 0, im->width, im->height, borderpx + im->x * win.cw, borderpx + im->y * win.ch);
+		XFreeGC(xw.dpy, gc);
+		im = im->next;
+	}
+	free(rects);
 }
 
 void
@@ -2046,6 +2192,9 @@ resize(XEvent *e)
 	cresize(e->xconfigure.width, e->xconfigure.height);
 }
 
+int tinsync(uint);
+int ttyread_pending();
+
 void
 run(void)
 {
@@ -2080,7 +2229,7 @@ run(void)
 		FD_SET(ttyfd, &rfd);
 		FD_SET(xfd, &rfd);
 
-		if (XPending(xw.dpy))
+		if (XPending(xw.dpy) || ttyread_pending())
 			timeout = 0;  /* existing events might not set xfd */
 
 		seltv.tv_sec = timeout / 1E3;
@@ -2094,7 +2243,8 @@ run(void)
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
 
-		if (FD_ISSET(ttyfd, &rfd))
+		int ttyin = FD_ISSET(ttyfd, &rfd) || ttyread_pending();
+		if (ttyin)
 			ttyread();
 
 		xev = 0;
@@ -2118,7 +2268,7 @@ run(void)
 		 * maximum latency intervals during `cat huge.txt`, and perfect
 		 * sync with periodic updates from animations/key-repeats/etc.
 		 */
-		if (FD_ISSET(ttyfd, &rfd) || xev) {
+		if (ttyin || xev) {
 			if (!drawing) {
 				trigger = now;
 				drawing = 1;
@@ -2127,6 +2277,18 @@ run(void)
 			          / maxlatency * minlatency;
 			if (timeout > 0)
 				continue;  /* we have time, try to find idle */
+		}
+
+		if (tinsync(su_timeout)) {
+			/*
+			 * on synchronized-update draw-suspension: don't reset
+			 * drawing so that we draw ASAP once we can (just after
+			 * ESU). it won't be too soon because we already can
+			 * draw now but we skip. we set timeout > 0 to draw on
+			 * SU-timeout even without new content.
+			 */
+			timeout = minlatency;
+			continue;
 		}
 
 		/* idle detected or maxlatency exhausted -> draw */
