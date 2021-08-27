@@ -1582,36 +1582,23 @@ xdrawglyphfontspecs(const XftGlyphFontSpec *specs, Glyph base, int len, int x, i
 	if (dmode & DRAW_BG) {
 		/* Intelligent cleaning up of the borders. */
 		if (x == 0) {
-			xclear(0, (y == 0)? 0 : winy, win.vborderpx,
+			xclear(0, (y == 0)? 0 : winy, borderpx,
 					winy + win.ch +
-					((winy + win.ch >= win.vborderpx + win.th)? win.h : 0));
+					((winy + win.ch >= borderpx + win.th)? win.h : 0));
 		}
 		if (winx + width >= win.hborderpx + win.tw) {
 			xclear(winx + width, (y == 0)? 0 : winy, win.w,
-					((winy + win.ch >= win.vborderpx + win.th)? win.h : (winy + win.ch)));
+					((winy + win.ch >= borderpx + win.th)? win.h : (winy + win.ch)));
 		}
 		if (y == 0)
-			xclear(winx, 0, winx + width, win.hborderpx);
-		if (winy + win.ch >= win.vborderpx + win.th)
+			xclear(winx, 0, winx + width, borderpx);
+		if (winy + win.ch >= borderpx + win.th)
 			xclear(winx, winy + win.ch, winx + width, win.h);
 
 		/* Fill the background */
 		XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
 	}
  
-
-	/* Clean up the region we want to draw to. */
-	XftDrawRect(xw.draw, bg, winx, winy, width, win.ch);
-
-	/* Set the clip region because Xft is sometimes dirty. */
-	r.x = 0;
-	r.y = 0;
-	r.height = win.ch;
-	r.width = width;
-	XftDrawSetClipRectangles(xw.draw, winx, winy, &r, 1);
-
-	/* Reset clip to none. */
-	XftDrawSetClip(xw.draw, 0);
 
 	if (dmode & DRAW_FG) {
 		if (base.mode & ATTR_BOXDRAW) {
@@ -2046,6 +2033,9 @@ resize(XEvent *e)
 	cresize(e->xconfigure.width, e->xconfigure.height);
 }
 
+int tinsync(uint);
+int ttyread_pending();
+
 void
 run(void)
 {
@@ -2080,7 +2070,7 @@ run(void)
 		FD_SET(ttyfd, &rfd);
 		FD_SET(xfd, &rfd);
 
-		if (XPending(xw.dpy))
+		if (XPending(xw.dpy) || ttyread_pending())
 			timeout = 0;  /* existing events might not set xfd */
 
 		seltv.tv_sec = timeout / 1E3;
@@ -2094,7 +2084,8 @@ run(void)
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
 
-		if (FD_ISSET(ttyfd, &rfd))
+		int ttyin = FD_ISSET(ttyfd, &rfd) || ttyread_pending();
+		if (ttyin)
 			ttyread();
 
 		xev = 0;
@@ -2118,7 +2109,7 @@ run(void)
 		 * maximum latency intervals during `cat huge.txt`, and perfect
 		 * sync with periodic updates from animations/key-repeats/etc.
 		 */
-		if (FD_ISSET(ttyfd, &rfd) || xev) {
+		if (ttyin || xev) {
 			if (!drawing) {
 				trigger = now;
 				drawing = 1;
@@ -2127,6 +2118,18 @@ run(void)
 			          / maxlatency * minlatency;
 			if (timeout > 0)
 				continue;  /* we have time, try to find idle */
+		}
+
+		if (tinsync(su_timeout)) {
+			/*
+			 * on synchronized-update draw-suspension: don't reset
+			 * drawing so that we draw ASAP once we can (just after
+			 * ESU). it won't be too soon because we already can
+			 * draw now but we skip. we set timeout > 0 to draw on
+			 * SU-timeout even without new content.
+			 */
+			timeout = minlatency;
+			continue;
 		}
 
 		/* idle detected or maxlatency exhausted -> draw */
