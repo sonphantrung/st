@@ -3,4 +3,4 @@ st
 *.o
 *.orig
 *.rej
-
+.ccls-cache/
