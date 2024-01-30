@@ -1919,7 +1919,7 @@ xstartdraw(void)
 void
 xdrawline(Line line, int x1, int y1, int x2)
 {
-	int i, x, ox, numspecs, numspecs_cached;
+	int i, x, ox, numspecs;
 	Glyph base, new;
 	XftGlyphFontSpec *specs;
 
@@ -1927,7 +1927,6 @@ xdrawline(Line line, int x1, int y1, int x2)
 	   won't get truncated (#223) */
 	for (int dmode = DRAW_BG; dmode <= DRAW_FG; dmode <<= 1) {
 		specs = xw.specbuf;
-		numspecs = numspecs_cached;
 		i = ox = 0;
 		for (x = x1; x < x2; x++) {
 			new = line[x];
@@ -1936,7 +1935,7 @@ xdrawline(Line line, int x1, int y1, int x2)
 			if (selected(x, y1))
 				new.mode ^= ATTR_REVERSE;
 			if ((i > 0) && ATTRCMP(base, new)) {
-				numspecs_cached = xmakeglyphfontspecs(specs, &line[ox], x - ox, ox, y1);
+				numspecs = xmakeglyphfontspecs(specs, &line[ox], x - ox, ox, y1);
 				xdrawglyphfontspecs(specs, base, numspecs, ox, y1, dmode);
 				i = 0;
 			}
@@ -1947,7 +1946,7 @@ xdrawline(Line line, int x1, int y1, int x2)
 			i++;
 		}
 		if (i > 0) {
-			numspecs_cached = xmakeglyphfontspecs(specs, &line[ox], x2 - ox, ox, y1);
+			numspecs = xmakeglyphfontspecs(specs, &line[ox], x - ox, ox, y1);
 			xdrawglyphfontspecs(specs, base, numspecs, ox, y1, dmode);
 		}
 	}
