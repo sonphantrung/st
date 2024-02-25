@@ -41,7 +41,7 @@ static RuneBuffer hbrunebuffer = { 0, NULL };
 hb_feature_t features[] = { 0 };
 
 void
-hbunloadfonts()
+hbunloadfonts(void)
 {
 	for (int i = 0; i < hbfontcache.capacity; i++) {
 		hb_font_destroy(hbfontcache.fonts[i].font);

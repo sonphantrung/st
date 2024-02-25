@@ -2198,7 +2198,7 @@ resize(XEvent *e)
 }
 
 int tinsync(uint);
-int ttyread_pending();
+int ttyread_pending(void);
 
 void
 run(void)

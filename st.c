@@ -245,14 +245,14 @@ static int su = 0;
 struct timespec sutv;
 
 static void
-tsync_begin()
+tsync_begin(void)
 {
 	clock_gettime(CLOCK_MONOTONIC, &sutv);
 	su = 1;
 }
 
 static void
-tsync_end()
+tsync_end(void)
 {
 	su = 0;
 }
@@ -870,7 +870,7 @@ ttynew(const char *line, char *cmd, const char *out, char **args)
 }
 
 static int twrite_aborted = 0;
-int ttyread_pending() { return twrite_aborted; }
+int ttyread_pending(void) { return twrite_aborted; }
 
 size_t
 ttyread(void)
